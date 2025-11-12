@@ -1,103 +1,172 @@
-// M5Stack Core2 + Servo2モジュールでサーボを自動制御するプログラム
-// 電源ONで自動的に一定間隔でサーボが動く
+// =====================================================
+// 四足歩行ロボット - 斜対歩（トロット歩容）プログラム
+// =====================================================
+// M5Stack Core2 for AWS + Servo2 モジュールを使用した
+// 四足歩行ロボットの制御プログラムです。
+//
+// 【ハードウェア構成】
+// - M5Stack Core2 for AWS: メインコントローラー
+// - Servo2 モジュール: PCA9685チップ搭載、I2C制御
+// - サーボモーター x 4個: 各足に1個ずつ
+//
+// 【サーボの配置】
+// - CH0: 右前足（Right Front）
+// - CH1: 右後ろ足（Right Rear）
+// - CH2: 左前足（Left Front）
+// - CH3: 左後ろ足（Left Rear）
+//
+// 【歩行方式：斜対歩（トロット歩容）】
+// 対角線上にある足を同時に動かす歩き方です。
+// - グループA: 右前 + 左後ろ を同時に動かす
+// - グループB: 左前 + 右後ろ を同時に動かす
+// これを交互に繰り返すことで前進します。
+//
+// 【動作の流れ】
+// 1. グループAを持ち上げる → 前に振る → 下ろす
+// 2. グループBを持ち上げる → 前に振る → 下ろす
+// 3. 繰り返し
+// =====================================================
 
 #include <M5Core2.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 
-// === 基本設定（変更不要） ===
+// PWMドライバーのインスタンス作成
+// アドレス0x40、I2C通信はWire1を使用
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40, Wire1);
-#define SERVOMIN  102    // 0度の位置
-#define SERVOMAX  512    // 180度の位置
-#define SERVO_FREQ 50     // サーボの周波数
 
-// === 使用するサーボの番号 ===
-const int SERVO_CH = 0;  // 1番目のコネクタに接続（0～15の番号）
-
-// === 便利な関数：角度を指定してサーボを動かす ===
-// 使い方: moveServo(90); で90度に移動
-void moveServo(int angle) {
-  // 角度を0～180度の範囲に制限
-  if (angle < 0) angle = 0;
-  if (angle > 180) angle = 180;
-
-  // 角度をサーボの制御値に変換して動かす
-  int pulse = map(angle, 0, 180, SERVOMIN, SERVOMAX);
-  pwm.setPWM(SERVO_CH, 0, pulse);
-}
-
-// === 初期設定（電源ON時に1回だけ実行） ===
 void setup() {
-  // M5Core2を起動
+  // M5Stack Core2の初期化
   M5.begin(true, true, true, true, kMBusModeInput);
+  Serial.begin(115200);
 
-  // 画面の準備
+  // I2C通信の初期化（GPIO32=SDA, GPIO33=SCL）
+  Wire1.begin(32, 33);
+
+  // 画面表示の設定
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setTextColor(WHITE, BLACK);
   M5.Lcd.setTextSize(2);
-
-  // タイトル表示
   M5.Lcd.setCursor(10, 10);
-  M5.Lcd.println("Servo2 Auto Control");
+  M5.Lcd.println("Quadruped Robot");
+  M5.Lcd.println("Initializing...");
 
-  // Servo2モジュールを起動
+  // PWMドライバー（PCA9685）の初期化
+  // 50Hzでサーボモーターを制御
   pwm.begin();
-  pwm.setOscillatorFrequency(27000000);
-  pwm.setPWMFreq(SERVO_FREQ);
-  delay(100);
+  pwm.setOscillatorFrequency(27000000);  // 内部クロック周波数
+  pwm.setPWMFreq(50);  // サーボ用の周波数（50Hz = 20ms周期）
 
-  // サーボを中央（90度）に移動
-  moveServo(90);
+  // 全てのサーボを初期位置（90度、直立）にセット
+  int channels[] = {0, 1, 2, 3};  // 4本の足に対応するチャンネル
+  int midPulse = 300;  // 90度に相当するPWM値
 
-  // 動作説明を表示
-  M5.Lcd.setCursor(10, 50);
-  M5.Lcd.println("Auto movement:");
-  M5.Lcd.setCursor(10, 80);
-  M5.Lcd.println("0 -> 90 -> 180 -> 90");
+  for(int i = 0; i < 4; i++) {
+    pwm.setPWM(channels[i], 0, midPulse);
+  }
 
-  delay(1000);
+  delay(1000);  // 初期位置に移動するまで待機
+
+  M5.Lcd.println("Ready!");
+  Serial.println("Quadruped robot initialized");
+  Serial.println("Starting diagonal gait...");
 }
 
-// === メインループ（繰り返し実行される） ===
 void loop() {
-  // 0度に移動
-  moveServo(0);
-  M5.Lcd.fillRect(10, 120, 200, 30, BLACK);
-  M5.Lcd.setCursor(10, 120);
-  M5.Lcd.println("Position: 0 degrees");
-  delay(2000);  // 2秒待機
+  // ==========================================
+  // 四足歩行ロボット - 斜対歩（トロット歩容）
+  // ==========================================
 
-  // 90度に移動
-  moveServo(90);
-  M5.Lcd.fillRect(10, 120, 200, 30, BLACK);
-  M5.Lcd.setCursor(10, 120);
-  M5.Lcd.println("Position: 90 degrees");
-  delay(2000);  // 2秒待機
+  // --- サーボの配置定義 ---
+  // チャンネル番号と足の対応関係
+  int ch_rightFront = 0;   // CH0: 右前足
+  int ch_rightRear = 1;    // CH1: 右後ろ足
+  int ch_leftFront = 2;    // CH2: 左前足
+  int ch_leftRear = 3;     // CH3: 左後ろ足
 
-  // 180度に移動
-  moveServo(180);
-  M5.Lcd.fillRect(10, 120, 200, 30, BLACK);
-  M5.Lcd.setCursor(10, 120);
-  M5.Lcd.println("Position: 180 degrees");
-  delay(2000);  // 2秒待機
+  // --- サーボの角度（PWM値）定義 ---
+  // ※お使いのサーボの特性に合わせて調整してください
+  int midPulse = 300;    // 90度：直立位置（初期位置）
+  int liftPulse = 250;   // 60度：足を持ち上げた位置（地面から離す）
+  int forwardPulse = 350; // 120度：足を前に振った位置（前進）
 
-  // 90度に戻る
-  moveServo(90);
-  M5.Lcd.fillRect(10, 120, 200, 30, BLACK);
-  M5.Lcd.setCursor(10, 120);
-  M5.Lcd.println("Position: 90 degrees");
-  delay(2000);  // 2秒待機
+  // --- 動作のタイミング設定 ---
+  int stepDelay = 800;   // 各動作の間隔（ミリ秒）ゆっくり歩くための設定
+
+  // ==========================================
+  // ステップ1: グループA（右前 + 左後ろ）を動かす
+  // ==========================================
+
+  // 1-1: グループAの足を持ち上げる
+  // 右前足と左後ろ足を同時に地面から離します
+  M5.Lcd.fillRect(0, 80, 320, 20, BLACK);
+  M5.Lcd.setCursor(10, 80);
+  M5.Lcd.println("Step: RF+LR Lift");
+  Serial.println("Step 1-1: Right Front + Left Rear - Lift");
+
+  pwm.setPWM(ch_rightFront, 0, liftPulse);  // 右前足を持ち上げ
+  pwm.setPWM(ch_leftRear, 0, liftPulse);    // 左後ろ足を持ち上げ
+  delay(stepDelay);
+
+  // 1-2: グループAの足を前に振る
+  // 持ち上げた足を前方に移動させます
+  M5.Lcd.fillRect(0, 80, 320, 20, BLACK);
+  M5.Lcd.setCursor(10, 80);
+  M5.Lcd.println("Step: RF+LR Forward");
+  Serial.println("Step 1-2: Right Front + Left Rear - Forward");
+
+  pwm.setPWM(ch_rightFront, 0, forwardPulse);  // 右前足を前へ
+  pwm.setPWM(ch_leftRear, 0, forwardPulse);    // 左後ろ足を前へ
+  delay(stepDelay);
+
+  // 1-3: グループAの足を下ろす
+  // 前に出した足を地面に着地させます
+  M5.Lcd.fillRect(0, 80, 320, 20, BLACK);
+  M5.Lcd.setCursor(10, 80);
+  M5.Lcd.println("Step: RF+LR Down");
+  Serial.println("Step 1-3: Right Front + Left Rear - Down");
+
+  pwm.setPWM(ch_rightFront, 0, midPulse);  // 右前足を着地
+  pwm.setPWM(ch_leftRear, 0, midPulse);    // 左後ろ足を着地
+  delay(stepDelay);
+
+  // ==========================================
+  // ステップ2: グループB（左前 + 右後ろ）を動かす
+  // ==========================================
+
+  // 2-1: グループBの足を持ち上げる
+  // 左前足と右後ろ足を同時に地面から離します
+  M5.Lcd.fillRect(0, 80, 320, 20, BLACK);
+  M5.Lcd.setCursor(10, 80);
+  M5.Lcd.println("Step: LF+RR Lift");
+  Serial.println("Step 2-1: Left Front + Right Rear - Lift");
+
+  pwm.setPWM(ch_leftFront, 0, liftPulse);  // 左前足を持ち上げ
+  pwm.setPWM(ch_rightRear, 0, liftPulse);  // 右後ろ足を持ち上げ
+  delay(stepDelay);
+
+  // 2-2: グループBの足を前に振る
+  // 持ち上げた足を前方に移動させます
+  M5.Lcd.fillRect(0, 80, 320, 20, BLACK);
+  M5.Lcd.setCursor(10, 80);
+  M5.Lcd.println("Step: LF+RR Forward");
+  Serial.println("Step 2-2: Left Front + Right Rear - Forward");
+
+  pwm.setPWM(ch_leftFront, 0, forwardPulse);  // 左前足を前へ
+  pwm.setPWM(ch_rightRear, 0, forwardPulse);  // 右後ろ足を前へ
+  delay(stepDelay);
+
+  // 2-3: グループBの足を下ろす
+  // 前に出した足を地面に着地させます
+  M5.Lcd.fillRect(0, 80, 320, 20, BLACK);
+  M5.Lcd.setCursor(10, 80);
+  M5.Lcd.println("Step: LF+RR Down");
+  Serial.println("Step 2-3: Left Front + Right Rear - Down");
+
+  pwm.setPWM(ch_leftFront, 0, midPulse);   // 左前足を着地
+  pwm.setPWM(ch_rightRear, 0, midPulse);   // 右後ろ足を着地
+  delay(stepDelay);
+
+  // このサイクルが繰り返されることで、ロボットが斜対歩で前進します
+  // loop()関数なので、自動的に最初に戻って繰り返されます
 }
-
-/* ===================================
-   接続方法：
-   1. Servo2モジュールとM5Core2を合体
-   2. サーボをServo2の1番目のコネクタに接続
-   3. Servo2モジュールに外部電源を接続（DC 5-6V）
-
-   動作：
-   - 起動時：サーボが90度（中央）に移動
-   - ボタンA：0度（左端）に移動
-   - ボタンB：90度（中央）に移動
-   - ボタンC：180度（右端）に移動
-   =================================== */
