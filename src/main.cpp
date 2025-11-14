@@ -27,17 +27,25 @@
 // 3. 繰り返し
 // =====================================================
 
-#include <M5Core2.h>
+#include <Arduino.h>
+#include <M5Unified.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <Avatar.h>
 
 // PWMドライバーのインスタンス作成
 // アドレス0x40、I2C通信はWire1を使用
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40, Wire1);
 
+// Stack-chan 顔インスタンス
+using namespace m5avatar;
+Avatar avatar;
+
 void setup() {
   // M5Stack Core2の初期化
-  M5.begin(true, true, true, true, kMBusModeInput);
+  auto cfg = M5.config();
+  M5.begin(cfg);
+
   Serial.begin(115200);
 
   // I2C通信の初期化（GPIO32=SDA, GPIO33=SCL）
@@ -62,6 +70,12 @@ void setup() {
   int midPulse = 300;  // 90度に相当するPWM値
 
   for(int i = 0; i < 4; i++) {
+    pwm.setPWM(channels[i], 0, 250);
+  }
+
+  delay(2000);  // 初期位置に移動するまで待機
+
+  for(int i = 0; i < 4; i++) {
     pwm.setPWM(channels[i], 0, midPulse);
   }
 
@@ -70,9 +84,40 @@ void setup() {
   M5.Lcd.println("Ready!");
   Serial.println("Quadruped robot initialized");
   Serial.println("Starting diagonal gait...");
+
+  avatar.init();  // アニメーション開始（瞬き自動）
 }
 
+enum State { OFF, WALKING }; // 名前付き
+State robotState = OFF;
+bool wasTouching = false; // タッチ検出時の連続トリガー防止
+
 void loop() {
+  M5.update();
+
+  bool touching = (M5.Touch.getCount() > 0);
+  if (touching) {
+    // タッチ開始の瞬間を検出
+    if (touching && !wasTouching) {
+      robotState = (robotState == OFF) ? WALKING : OFF;
+      avatar.setExpression(Expression::Happy);
+      avatar.setSpeechText(robotState == State::WALKING ? "WALKING!" : "OFF!");
+      Serial.println(robotState == State::WALKING ? "START WALKING" : "STOPPED");
+    }
+  }
+  wasTouching = touching;
+
+  if (robotState == WALKING) {
+    // TODO 他のクラスに定義した歩行関数を呼び出す
+  }
+
+  // // タッチで Avatar 表情変更（おまけ）
+  // if (M5.Touch.getCount() > 0) {
+  //   avatar.setExpression(Expression::Happy);
+  //   delay(500);
+  //   avatar.setExpression(Expression::Neutral);
+  // }
+
   // ==========================================
   // 四足歩行ロボット - 斜対歩（トロット歩容）
   // ==========================================
